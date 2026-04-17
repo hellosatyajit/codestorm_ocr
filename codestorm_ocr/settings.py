@@ -25,7 +25,7 @@ SECRET_KEY = 'django-insecure-15p0245ilgkyrujts39)xg7g(*4eyz99mix-o!4j0g5)=k&8^(
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ["*"]
 
 
 # Application definition
@@ -37,6 +37,8 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    # Dev tooling
+    'django_browser_reload',
     # Custom Apps
     'engine',
 ]
@@ -124,3 +126,22 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# Media uploads + generated artifacts (previews, rebuilt PDFs)
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
+
+# Bundled Noto TTFs for multi-script PDF rebuild
+FONTS_DIR = BASE_DIR / 'fonts'
+
+# Cap to keep synchronous mock processing snappy in the request cycle
+MAX_PAGES_PER_UPLOAD = 10
+
+# File upload allowlist (content types)
+ALLOWED_UPLOAD_MIME_TYPES = {
+    'application/pdf',
+    'image/png',
+    'image/jpeg',
+    'image/jpg',
+    'image/webp',
+}

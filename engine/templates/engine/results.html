@@ -1,0 +1,247 @@
+{% extends "engine/base.html" %}
+
+{% block title %}Results · {{ doc.id }}{% endblock %}
+
+{% block extra_styles %}
+.split { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-top: 1rem; }
+.split > section { border: 1px solid var(--pico-muted-border-color); border-radius: 0.5rem; padding: 1rem; background: var(--pico-card-background-color); }
+.split h3 { margin-top: 0; font-size: 1rem; }
+.page-wrap { position: relative; margin-bottom: 1.5rem; }
+.page-wrap canvas { display: block; max-width: 100%; border: 1px solid var(--pico-muted-border-color); background: #fafafa; }
+.block-list { max-height: 80vh; overflow-y: auto; }
+.block-card { border: 1px solid var(--pico-muted-border-color); border-radius: 6px; padding: 0.6rem 0.75rem; margin-bottom: 0.5rem; transition: background 0.12s ease; cursor: pointer; }
+.block-card.active { background: var(--pico-primary-background); border-color: var(--pico-primary); }
+.block-card .meta { display: flex; gap: 0.5rem; align-items: center; font-size: 0.75rem; opacity: 0.85; margin-bottom: 0.35rem; flex-wrap: wrap; }
+.block-card .lang-badge { background: var(--pico-muted-border-color); padding: 1px 6px; border-radius: 999px; font-weight: 600; text-transform: uppercase; }
+.block-card .type-badge { background: var(--pico-primary-background); color: var(--pico-primary); padding: 1px 6px; border-radius: 999px; font-weight: 600; }
+.conf-bar { height: 4px; background: var(--pico-muted-border-color); border-radius: 2px; overflow: hidden; flex: 1; min-width: 80px; }
+.conf-bar > span { display: block; height: 100%; }
+.conf-high { background: #22c55e; }
+.conf-mid { background: #eab308; }
+.conf-low { background: #ef4444; }
+.original-text { font-size: 0.88rem; opacity: 0.8; margin: 0 0 0.3rem 0; }
+.translated-text { font-weight: 500; margin: 0; }
+.toolbar { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; margin-top: 0.5rem; }
+.page-index { font-size: 0.8rem; opacity: 0.6; margin-top: 0.25rem; }
+.status-pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; }
+.status-done { background: #22c55e22; color: #166534; }
+.status-failed { background: #ef444422; color: #991b1b; }
+.status-processing { background: #eab30822; color: #854d0e; }
+.status-pending { background: var(--pico-muted-border-color); }
+{% endblock %}
+
+{% block content %}
+<header style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin: 0.5rem 0 0 0;">
+    <div>
+        <h2 style="margin-bottom: 0.25rem;">Document <code>{{ doc.id }}</code></h2>
+        <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+            <span class="status-pill status-{{ doc.status }}">{{ doc.get_status_display }}</span>
+            <small>Target language: <strong>{{ doc.get_target_lang_display|default:doc.target_lang }}</strong></small>
+            <small>Pages: <strong>{{ pages|length }}</strong></small>
+            {% if doc.error_message %}<small style="color: var(--pico-color-red-500);">{{ doc.error_message }}</small>{% endif %}
+        </div>
+    </div>
+    <div class="toolbar">
+        <a href="{{ download_json_url }}" role="button" class="secondary">Download JSON</a>
+        {% if doc.translated_file %}
+            <a href="{{ download_pdf_url }}" role="button">Download translated PDF</a>
+        {% endif %}
+        <a href="{% url 'engine:upload' %}" role="button" class="outline secondary">Upload another</a>
+    </div>
+</header>
+
+{% if doc.status == 'done' %}
+<div class="split">
+    <section>
+        <h3>Original</h3>
+        {% for page in pages %}
+            <div class="page-wrap" data-page-index="{{ page.index }}">
+                <canvas
+                    id="canvas-{{ page.index }}"
+                    data-page-index="{{ page.index }}"
+                    data-width-pt="{{ page.width_pt }}"
+                    data-height-pt="{{ page.height_pt }}"
+                    {% if page.preview %}data-preview="{{ page.preview.url }}"{% endif %}
+                ></canvas>
+                <div class="page-index">Page {{ page.index|add:1 }} · {{ page.width_pt|floatformat:0 }} x {{ page.height_pt|floatformat:0 }} pt</div>
+            </div>
+        {% endfor %}
+    </section>
+
+    <section>
+        <h3>Extracted &amp; translated blocks</h3>
+        <div id="blockList" class="block-list">
+            {% for page in pages %}
+                <details {% if forloop.first %}open{% endif %}>
+                    <summary>Page {{ page.index|add:1 }} <small>({{ page.blocks.count }} blocks)</small></summary>
+                    {% for block in page.blocks.all %}
+                        {% with conf_pct=block.confidence|floatformat:2 %}
+                        <article
+                            class="block-card"
+                            id="block-{{ block.id }}"
+                            data-block-id="{{ block.id }}"
+                            data-page-index="{{ page.index }}"
+                            data-bbox="[{{ block.x0|floatformat:2 }},{{ block.y0|floatformat:2 }},{{ block.x1|floatformat:2 }},{{ block.y1|floatformat:2 }}]"
+                            data-confidence="{{ block.confidence }}"
+                        >
+                            <div class="meta">
+                                <span class="lang-badge">{{ block.detected_lang|default:"?"|upper }}</span>
+                                <span class="type-badge">{{ block.block_type }}</span>
+                                <div class="conf-bar" title="Confidence {{ conf_pct }}">
+                                    <span
+                                        class="{% if block.confidence >= 0.8 %}conf-high{% elif block.confidence >= 0.6 %}conf-mid{% else %}conf-low{% endif %}"
+                                        style="width: {% widthratio block.confidence 1 100 %}%;"
+                                    ></span>
+                                </div>
+                                <small>{{ conf_pct }}</small>
+                            </div>
+                            <p class="original-text" {% if block.detected_lang == 'ar' %}dir="rtl"{% endif %}>{{ block.original_text }}</p>
+                            <p class="translated-text" {% if doc.target_lang == 'ar' %}dir="rtl"{% endif %}>{{ block.translated_text }}</p>
+                        </article>
+                        {% endwith %}
+                    {% endfor %}
+                </details>
+            {% endfor %}
+        </div>
+    </section>
+</div>
+{% else %}
+<article>
+    <p>Document status: <strong>{{ doc.get_status_display }}</strong>.</p>
+    {% if doc.error_message %}<pre style="white-space: pre-wrap;">{{ doc.error_message }}</pre>{% endif %}
+</article>
+{% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+{% if doc.status == 'done' %}
+<script>
+(function () {
+    const BLOCKS_URL = "{{ blocks_json_url }}";
+    const state = { pages: [], canvases: new Map(), activeBlockId: null };
+
+    async function boot() {
+        const resp = await fetch(BLOCKS_URL);
+        const data = await resp.json();
+        state.pages = data.pages;
+        for (const page of data.pages) {
+            await renderPage(page);
+        }
+        wireBlockClicks();
+    }
+
+    function renderPage(page) {
+        return new Promise((resolve) => {
+            const canvas = document.getElementById(`canvas-${page.page_index}`);
+            if (!canvas) return resolve();
+
+            const previewUrl = canvas.dataset.preview;
+            const widthPt = parseFloat(canvas.dataset.widthPt);
+            const heightPt = parseFloat(canvas.dataset.heightPt);
+            const maxWidthPx = Math.min(canvas.parentElement.clientWidth || 700, 900);
+            const scale = maxWidthPx / widthPt;
+
+            canvas.width = Math.round(widthPt * scale);
+            canvas.height = Math.round(heightPt * scale);
+
+            const ctx = canvas.getContext("2d");
+            const draw = () => {
+                drawBoxes(ctx, canvas, page, scale);
+                resolve();
+            };
+
+            if (previewUrl) {
+                const img = new Image();
+                img.onload = () => {
+                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                    draw();
+                };
+                img.onerror = () => { ctx.fillStyle = "#f3f4f6"; ctx.fillRect(0, 0, canvas.width, canvas.height); draw(); };
+                img.src = previewUrl;
+            } else {
+                ctx.fillStyle = "#f3f4f6";
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                draw();
+            }
+
+            state.canvases.set(page.page_index, { canvas, ctx, scale, page });
+
+            canvas.addEventListener("click", (ev) => handleCanvasClick(ev, page.page_index));
+        });
+    }
+
+    function drawBoxes(ctx, canvas, page, scale, highlightId) {
+        for (const b of page.blocks) {
+            const [x0, y0, x1, y1] = b.bounding_box;
+            const x = x0 * scale;
+            const y = y0 * scale;
+            const w = (x1 - x0) * scale;
+            const h = (y1 - y0) * scale;
+            ctx.lineWidth = (highlightId === b.block_id) ? 3 : 1.5;
+            ctx.strokeStyle = colorFor(b, highlightId);
+            ctx.strokeRect(x, y, w, h);
+        }
+    }
+
+    function colorFor(block, highlightId) {
+        if (highlightId === block.block_id) return "#2563eb";
+        if (block.confidence < 0.6) return "rgba(239,68,68,0.85)";
+        if (block.confidence < 0.8) return "rgba(234,179,8,0.85)";
+        return "rgba(34,197,94,0.7)";
+    }
+
+    function handleCanvasClick(ev, pageIndex) {
+        const state_entry = state.canvases.get(pageIndex);
+        if (!state_entry) return;
+        const rect = state_entry.canvas.getBoundingClientRect();
+        const cx = (ev.clientX - rect.left) * (state_entry.canvas.width / rect.width);
+        const cy = (ev.clientY - rect.top) * (state_entry.canvas.height / rect.height);
+        const pt_x = cx / state_entry.scale;
+        const pt_y = cy / state_entry.scale;
+        const hit = state_entry.page.blocks.find(b => {
+            const [x0, y0, x1, y1] = b.bounding_box;
+            return pt_x >= x0 && pt_x <= x1 && pt_y >= y0 && pt_y <= y1;
+        });
+        if (hit) highlight(hit.block_id);
+    }
+
+    function wireBlockClicks() {
+        document.querySelectorAll(".block-card").forEach((el) => {
+            el.addEventListener("click", () => highlight(parseInt(el.dataset.blockId, 10), { scrollInto: false }));
+        });
+    }
+
+    function highlight(blockId, opts = { scrollInto: true }) {
+        state.activeBlockId = blockId;
+        document.querySelectorAll(".block-card.active").forEach(el => el.classList.remove("active"));
+        const card = document.getElementById(`block-${blockId}`);
+        if (card) {
+            card.classList.add("active");
+            if (opts.scrollInto) card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+            // Make sure the enclosing <details> is open.
+            const parent = card.closest("details");
+            if (parent && !parent.open) parent.open = true;
+        }
+        for (const [, entry] of state.canvases) {
+            entry.ctx.clearRect(0, 0, entry.canvas.width, entry.canvas.height);
+            const img = new Image();
+            img.onload = () => {
+                entry.ctx.drawImage(img, 0, 0, entry.canvas.width, entry.canvas.height);
+                drawBoxes(entry.ctx, entry.canvas, entry.page, entry.scale, blockId);
+            };
+            const previewUrl = entry.canvas.dataset.preview;
+            if (previewUrl) {
+                img.src = previewUrl;
+            } else {
+                entry.ctx.fillStyle = "#f3f4f6";
+                entry.ctx.fillRect(0, 0, entry.canvas.width, entry.canvas.height);
+                drawBoxes(entry.ctx, entry.canvas, entry.page, entry.scale, blockId);
+            }
+        }
+    }
+
+    boot();
+})();
+</script>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,27 @@
+{% load static %}<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{% block title %}Codestorm OCR{% endblock %}</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css" />
+    <style>
+        :root { --pico-font-size: 15px; }
+        body > main { padding-top: 1.5rem; padding-bottom: 3rem; }
+        nav.app-nav { display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 1rem; border-bottom: 1px solid var(--pico-muted-border-color); }
+        nav.app-nav h1 { margin: 0; font-size: 1.15rem; }
+        nav.app-nav small { opacity: 0.7; }
+        {% block extra_styles %}{% endblock %}
+    </style>
+</head>
+<body>
+    <nav class="app-nav">
+        <h1><a href="{% url 'engine:upload' %}" style="text-decoration: none; color: inherit;">Codestorm OCR</a></h1>
+        <small>Multi-lingual PDF translation · layout-preserving rebuild</small>
+    </nav>
+    <main class="container-fluid" style="max-width: 1400px; margin: 0 auto;">
+        {% block content %}{% endblock %}
+    </main>
+    {% block extra_scripts %}{% endblock %}
+</body>
+</html>

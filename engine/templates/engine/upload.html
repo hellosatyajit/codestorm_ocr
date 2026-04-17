@@ -1,0 +1,48 @@
+{% extends "engine/base.html" %}
+
+{% block title %}Upload · Codestorm OCR{% endblock %}
+
+{% block content %}
+<article style="max-width: 640px; margin: 3rem auto;">
+    <header>
+        <h2>Upload a document</h2>
+        <p>Drop a PDF or image, pick a target language, and get a layout-preserving translated copy plus structured JSON.</p>
+    </header>
+
+    <form method="post" enctype="multipart/form-data">
+        {% csrf_token %}
+
+        <label for="{{ form.file.id_for_label }}">
+            {{ form.file.label }}
+            {{ form.file }}
+            {% if form.file.help_text %}<small>{{ form.file.help_text }}</small>{% endif %}
+            {% for err in form.file.errors %}<small style="color: var(--pico-color-red-500);">{{ err }}</small>{% endfor %}
+        </label>
+
+        <label for="{{ form.target_lang.id_for_label }}">
+            {{ form.target_lang.label }}
+            {{ form.target_lang }}
+            {% for err in form.target_lang.errors %}<small style="color: var(--pico-color-red-500);">{{ err }}</small>{% endfor %}
+        </label>
+
+        <button type="submit" id="submitBtn">Process document</button>
+    </form>
+
+    <p style="margin-top: 2rem; opacity: 0.8;">
+        <small>
+            Processing runs synchronously using the mock OCR + translation pipeline
+            (typically well under a second for a small PDF). Swap in PaddleOCR and
+            Ollama later behind the same Protocol interfaces.
+        </small>
+    </p>
+</article>
+
+<script>
+    document.querySelector("form").addEventListener("submit", function () {
+        const btn = document.getElementById("submitBtn");
+        btn.setAttribute("aria-busy", "true");
+        btn.textContent = "Extracting -> Detecting -> Translating -> Rebuilding...";
+        btn.disabled = true;
+    });
+</script>
+{% endblock %}
