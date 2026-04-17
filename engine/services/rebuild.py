@@ -3,18 +3,17 @@
 Given the original file and a list of translated blocks per page, produce
 a new PDF that:
 
-1. Preserves the original page visuals (images, figures, backgrounds) by
-   copying the source page with ``show_pdf_page``.
-2. Whites out every translated-block region so the original text doesn't
-   bleed through underneath.
-3. Writes the translated text into the same bounding box, picking a
-   script-matched Noto font and applying RTL shaping for Arabic.
+1. For PDF inputs: clones the source into a writable output doc, uses
+   PyMuPDF redactions to strip ONLY the original text glyphs in each
+   block's bounding box (vectors, images, backgrounds stay intact), then
+   writes the translated text on top.
+2. For image inputs: places the raster as a page background, paints a
+   tight whiteout rect per block (since there's no text layer to redact)
+   and writes the translated text on top.
+3. Picks a script-matched Noto font and reshapes RTL scripts.
 4. Uses a tiered fit algorithm (line-height shrink, then font-size
    shrink, then truncation) so long translations still land inside the
    box without disappearing.
-
-For image uploads we synthesize a blank page matching the OCR page size
-since there's no source PDF to copy from.
 """
 from __future__ import annotations
 
@@ -31,8 +30,16 @@ IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
 _FONT_SHRINK_STEPS = (95, 90, 85, 80, 75, 70, 65, 60, 55, 50)
 # Line-height values to try before shrinking the font.
 _LINE_HEIGHT_STEPS = (1.2, 1.1, 1.0)
-# Padding added to the white-out rect so antialiased descenders don't peek.
-_WHITEOUT_PAD_RATIO = 0.15
+# Tiny padding for the image-input whiteout so antialiased descenders don't peek.
+_IMAGE_WHITEOUT_PAD_RATIO = 0.02
+# Non-Latin scripts visually occupy more vertical space per glyph (shirorekha,
+# ascenders, Han strokes). Start tier-1 fit a hair smaller so the translated
+# text lands inside the original box more often without falling to shrink tiers.
+_SCRIPT_START_SCALE = {
+    "NotoDevanagari": 0.90,
+    "NotoArabic": 0.90,
+    "NotoCJK": 0.95,
+}
 
 
 @dataclass
@@ -87,18 +94,42 @@ def _rebuild_from_pdf(
     src = fitz.open(source_path)
     out = fitz.open()
     try:
-        for pno, src_page in enumerate(src):
-            new_page = out.new_page(
-                width=src_page.rect.width, height=src_page.rect.height
+        # `insert_pdf` deep-copies pages into a writable document so we can
+        # redact the text content stream in place without mutating the source.
+        # This is what makes the translated PDF inherit the original's colored
+        # accent bars, logos, and backgrounds cleanly - we only strip the
+        # text glyphs inside each block's bbox, leaving vectors and images
+        # untouched.
+        out.insert_pdf(src)
+        for pno, page in enumerate(out):
+            blocks = blocks_by_page.get(pno, [])
+            _queue_redactions(page, blocks)
+            # PDF_REDACT_IMAGE_NONE keeps embedded images that overlap the
+            # block (logos, background photos). PDF_REDACT_LINE_ART_NONE
+            # keeps the colored vector accents on each card.
+            page.apply_redactions(
+                images=fitz.PDF_REDACT_IMAGE_NONE,
+                graphics=fitz.PDF_REDACT_LINE_ART_NONE,
             )
-            # Copy original page content (images, vectors, backgrounds).
-            new_page.show_pdf_page(new_page.rect, src, pno)
-            _paint_blocks(new_page, blocks_by_page.get(pno, []))
+            _paint_blocks(page, blocks, whiteout=False)
         out.save(str(out_path), deflate=True, garbage=3)
     finally:
         out.close()
         src.close()
     return out_path
+
+
+def _queue_redactions(page: "fitz.Page", blocks: list[RebuildBlock]) -> None:
+    """Queue one redaction annotation per block rect.
+
+    The actual removal happens when the caller invokes
+    `page.apply_redactions(...)` with appropriate keep-flags.
+    """
+    for block in blocks:
+        rect = fitz.Rect(block.x0, block.y0, block.x1, block.y1)
+        if rect.is_empty or rect.width <= 1 or rect.height <= 1:
+            continue
+        page.add_redact_annot(rect)
 
 
 def _rebuild_from_image(
@@ -119,14 +150,27 @@ def _rebuild_from_image(
             # If PyMuPDF can't read this image, leave the page blank - the
             # translated blocks will still be drawn below.
             pass
-        _paint_blocks(new_page, blocks_by_page.get(0, []))
+        _paint_blocks(new_page, blocks_by_page.get(0, []), whiteout=True)
         out.save(str(out_path), deflate=True, garbage=3)
     finally:
         out.close()
     return out_path
 
 
-def _paint_blocks(page: "fitz.Page", blocks: list[RebuildBlock]) -> None:
+def _paint_blocks(
+    page: "fitz.Page",
+    blocks: list[RebuildBlock],
+    *,
+    whiteout: bool,
+) -> None:
+    """Write translated text into each block's rect.
+
+    ``whiteout`` should be True only on the image-input path, where the
+    raster-page background can't be redacted so we have to mask each block
+    with a tight white rectangle instead. On the PDF path redactions have
+    already removed the original text, so the extra draw_rect isn't needed
+    and would just cover up colored card backgrounds.
+    """
     for block in blocks:
         text = (block.translated_text or "").strip()
         if not text:
@@ -134,11 +178,12 @@ def _paint_blocks(page: "fitz.Page", blocks: list[RebuildBlock]) -> None:
         rect = fitz.Rect(block.x0, block.y0, block.x1, block.y1)
         if rect.is_empty or rect.width <= 1 or rect.height <= 1:
             continue
-        pad = rect.height * _WHITEOUT_PAD_RATIO
-        whiteout = fitz.Rect(
-            rect.x0 - pad, rect.y0 - pad, rect.x1 + pad, rect.y1 + pad
-        )
-        page.draw_rect(whiteout, color=None, fill=(1, 1, 1), overlay=True)
+        if whiteout:
+            pad = rect.height * _IMAGE_WHITEOUT_PAD_RATIO
+            wo = fitz.Rect(
+                rect.x0 - pad, rect.y0 - pad, rect.x1 + pad, rect.y1 + pad
+            )
+            page.draw_rect(wo, color=None, fill=(1, 1, 1), overlay=True)
         _insert_text_fit(page, rect, text, block.font_size_pt)
 
 
@@ -155,6 +200,7 @@ def _insert_text_fit(
     align = fitz.TEXT_ALIGN_RIGHT if font.is_rtl else fitz.TEXT_ALIGN_LEFT
 
     base_size = max(float(base_size or 11.0), 6.0)
+    base_size *= _SCRIPT_START_SCALE.get(font.logical_name, 1.0)
 
     # Tier 1: keep original font size, shrink line-height.
     for lh in _LINE_HEIGHT_STEPS:
