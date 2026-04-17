@@ -1,0 +1,27 @@
+[
+  {
+    "id": "blk_001",
+    "bbox": [15, 20, 380, 72],
+    "text": "昨日の朝、私は駅まで歩きながら春の空気を感じていました。"
+  },
+  {
+    "id": "blk_002",
+    "bbox": [15, 75, 380, 125],
+    "text": "This is a long OCR sentence from an English paragraph that should stay meaningful after translation."
+  },
+  {
+    "id": "blk_003",
+    "bbox": null,
+    "text": "Ce matin, je me suis levé plus tôt pour commencer la journée calmement."
+  },
+  {
+    "id": "blk_004",
+    "bbox": [10, 130, 390, 180],
+    "text": "你好，今天我们将测试中文文本在翻译流程中的表现。"
+  },
+  {
+    "id": "blk_005",
+    "bbox": [10, 185, 390, 235],
+    "text": "नमस्ते, यह देवनागरी लिपि में लिखा गया उदाहरण वाक्य है।"
+  }
+]
