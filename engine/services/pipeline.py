@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from django.conf import settings
@@ -20,7 +21,11 @@ from .language import detect_language
 from .ocr_pipeline import BlockResult, MockOCRService, OCRService
 from .preview import render_previews
 from .rebuild import RebuildBlock, rebuild_pdf
-from .translate import MockTranslationService, TranslationService
+from .translate import (
+    MockTranslationService,
+    OllamaTranslationService,
+    TranslationService,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,10 +43,12 @@ def process_document(
     """
     doc = Document.objects.get(pk=document_id)
     ocr = ocr or MockOCRService()
-    translator = translator or MockTranslationService()
+    if translator is None:
+        translator = OllamaTranslationService()
+        translator.ping()
 
     doc.status = Document.Status.PROCESSING
-    doc.error_message = ""
+    doc.error_message = f"Using {translator.__class__.__name__}"
     doc.save(update_fields=["status", "error_message", "updated_at"])
 
     try:
@@ -62,7 +69,8 @@ def process_document(
         _rebuild_and_attach(doc, source_path, ocr_pages)
 
         doc.status = Document.Status.DONE
-        doc.save(update_fields=["status", "updated_at"])
+        doc.error_message = ""
+        doc.save(update_fields=["status", "error_message", "updated_at"])
     except Exception as exc:
         logger.exception("Pipeline failed for document %s", doc.pk)
         doc.status = Document.Status.FAILED
@@ -138,30 +146,40 @@ def _persist_blocks(
     target_lang: str,
     translator: TranslationService,
 ) -> None:
-    rows: list[Block] = []
-    for order, block in enumerate(blocks):
-        detected = detect_language(block.text)
-        translated = translator.translate(
-            block.text, src_lang=detected, tgt_lang=target_lang
+    if not blocks:
+        return
+
+    workers = max(1, int(getattr(settings, "TRANSLATION_CONCURRENCY", 4)))
+    detected_langs = [detect_language(b.text) for b in blocks]
+
+    def _translate_one(i: int) -> str:
+        return translator.translate(
+            blocks[i].text,
+            src_lang=detected_langs[i],
+            tgt_lang=target_lang,
         )
-        rows.append(
-            Block(
-                page=page,
-                order=order,
-                block_type=block.block_type or Block.Type.PARAGRAPH,
-                x0=block.x0,
-                y0=block.y0,
-                x1=block.x1,
-                y1=block.y1,
-                original_text=block.text,
-                translated_text=translated,
-                detected_lang=detected,
-                confidence=block.confidence,
-                font_size_pt=block.font_size_pt,
-            )
+
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        translations = list(ex.map(_translate_one, range(len(blocks))))
+
+    rows = [
+        Block(
+            page=page,
+            order=i,
+            block_type=b.block_type or Block.Type.PARAGRAPH,
+            x0=b.x0,
+            y0=b.y0,
+            x1=b.x1,
+            y1=b.y1,
+            original_text=b.text,
+            translated_text=translations[i],
+            detected_lang=detected_langs[i],
+            confidence=b.confidence,
+            font_size_pt=b.font_size_pt,
         )
-    if rows:
-        Block.objects.bulk_create(rows)
+        for i, b in enumerate(blocks)
+    ]
+    Block.objects.bulk_create(rows)
 
 
 def _rebuild_and_attach(doc: Document, source_path: Path, ocr_pages) -> None:

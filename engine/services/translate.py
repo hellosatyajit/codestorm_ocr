@@ -9,7 +9,13 @@ signature.
 """
 from __future__ import annotations
 
+import re
+import threading
+from dataclasses import dataclass
 from typing import Protocol
+
+import requests
+from django.conf import settings
 
 
 class TranslationService(Protocol):
@@ -101,3 +107,195 @@ class MockTranslationService:
         idx = (hash(clean) & 0x7FFFFFFF) % len(pool)
         template = pool[idx]
         return template.format(i=(abs(hash(clean)) % 1000))
+
+
+# ---------------------------------------------------------------------------
+# Real translation backend: Ollama (qwen2.5:3b by default)
+# ---------------------------------------------------------------------------
+
+_LANG_NAMES = {
+    "en": "English",
+    "hi": "Hindi",
+    "ar": "Arabic",
+    "zh": "Chinese",
+    "zh-cn": "Chinese (Simplified)",
+    "zh-tw": "Chinese (Traditional)",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "ru": "Russian",
+    "de": "German",
+    "fr": "French",
+    "es": "Spanish",
+    "pt": "Portuguese",
+    "it": "Italian",
+    "tr": "Turkish",
+    "bn": "Bengali",
+    "ur": "Urdu",
+}
+
+
+_PREFIX_RE = re.compile(
+    r"^\s*(?:translation|translated(?:\s+text)?|here(?:'s| is)(?:\s+the)?(?:\s+translation)?|output)\s*[:\-]\s*",
+    re.IGNORECASE,
+)
+
+
+def _clean_model_output(raw: str) -> str:
+    """Strip common LLM cruft (preambles, wrapping quotes, markdown fences)."""
+    if not raw:
+        return ""
+    s = raw.strip()
+
+    # Strip triple-backtick code fences if the model wrapped the output.
+    if s.startswith("```"):
+        s = s.strip("`").strip()
+        if "\n" in s:
+            first, rest = s.split("\n", 1)
+            if len(first) < 20 and " " not in first:
+                s = rest.strip()
+
+    # Strip "Translation:" / "Translated:" / "Output:" preambles (possibly repeated).
+    for _ in range(3):
+        new = _PREFIX_RE.sub("", s)
+        if new == s:
+            break
+        s = new
+
+    # Strip symmetric wrapping quotes.
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in ("\"", "'", "\u201c", "\u2018"):
+        s = s[1:-1].strip()
+    if s.startswith("\u201c") and s.endswith("\u201d"):
+        s = s[1:-1].strip()
+    if s.startswith("\u2018") and s.endswith("\u2019"):
+        s = s[1:-1].strip()
+
+    # Collapse >2 blank lines but preserve line breaks.
+    s = re.sub(r"\n{3,}", "\n\n", s)
+    return s.strip()
+
+
+@dataclass(frozen=True)
+class _CacheKey:
+    text: str
+    src: str
+    tgt: str
+
+
+class OllamaTranslationService:
+    """Translator backed by a locally-running Ollama instance.
+
+    Uses ``/api/generate`` with ``stream=False`` for single-shot responses.
+    Connection errors, timeouts, or HTTP failures are raised so the pipeline
+    marks the document as failed with a clear error message.
+    """
+
+    def __init__(
+        self,
+        base_url: str | None = None,
+        model: str | None = None,
+        timeout_s: int | None = None,
+    ) -> None:
+        self._base = (base_url or settings.OLLAMA_BASE_URL).rstrip("/")
+        self._model = model or settings.OLLAMA_MODEL
+        self._timeout = int(timeout_s or settings.OLLAMA_TIMEOUT_S)
+        self._cache: dict[_CacheKey, str] = {}
+        self._lock = threading.Lock()
+
+    # --- public API ------------------------------------------------------
+
+    def translate(self, text: str, src_lang: str, tgt_lang: str) -> str:
+        clean = (text or "").strip()
+        if len(clean) < 2:
+            return clean
+        if src_lang and tgt_lang and src_lang.lower() == tgt_lang.lower():
+            return clean
+
+        key = _CacheKey(
+            clean,
+            (src_lang or "").lower(),
+            (tgt_lang or "").lower(),
+        )
+        with self._lock:
+            hit = self._cache.get(key)
+            if hit is not None:
+                return hit
+
+        out = self._call_ollama(clean, src_lang, tgt_lang)
+        with self._lock:
+            self._cache[key] = out
+        return out
+
+    def ping(self) -> None:
+        """Fail fast if the Ollama server is unreachable.
+
+        Raises ``RuntimeError`` with a human-friendly hint on failure.
+        """
+        url = f"{self._base}/api/tags"
+        try:
+            r = requests.get(url, timeout=min(self._timeout, 5))
+            r.raise_for_status()
+        except requests.exceptions.RequestException as exc:
+            raise RuntimeError(
+                f"Cannot reach Ollama at {self._base}. Is it running? "
+                f"Start it with `ollama serve` and make sure `{self._model}` is pulled "
+                f"(`ollama pull {self._model}`)."
+            ) from exc
+
+    # --- internals -------------------------------------------------------
+
+    def _call_ollama(self, text: str, src_lang: str, tgt_lang: str) -> str:
+        tgt_key = (tgt_lang or "").lower()
+        src_key = (src_lang or "").lower()
+        tgt_name = _LANG_NAMES.get(tgt_key, tgt_lang or "English")
+        src_hint = _LANG_NAMES.get(src_key, "")
+
+        system = (
+            "You are a professional translator. Output ONLY the translated text "
+            "with no explanations, no quotes, no prefixes, no markdown. "
+            "Preserve line breaks exactly."
+        )
+        prompt = (
+            f"Translate the following text to {tgt_name}"
+            + (f" (source language: {src_hint})." if src_hint else ".")
+            + f"\n\n{text}"
+        )
+        payload = {
+            "model": self._model,
+            "system": system,
+            "prompt": prompt,
+            "stream": False,
+            "options": {"temperature": 0.2, "num_predict": 1024},
+        }
+
+        try:
+            r = requests.post(
+                f"{self._base}/api/generate",
+                json=payload,
+                timeout=self._timeout,
+            )
+            r.raise_for_status()
+        except requests.exceptions.ConnectionError as exc:
+            raise RuntimeError(
+                f"Cannot reach Ollama at {self._base}. Is it running? "
+                f"Start with `ollama serve` and `ollama pull {self._model}`."
+            ) from exc
+        except requests.exceptions.Timeout as exc:
+            raise RuntimeError(
+                f"Ollama request timed out after {self._timeout}s "
+                f"(model={self._model}). Consider increasing OLLAMA_TIMEOUT_S."
+            ) from exc
+        except requests.exceptions.HTTPError as exc:
+            raise RuntimeError(
+                f"Ollama returned HTTP {r.status_code}: {r.text[:200]}"
+            ) from exc
+
+        try:
+            data = r.json()
+        except ValueError as exc:
+            raise RuntimeError(
+                f"Ollama returned non-JSON response: {r.text[:200]}"
+            ) from exc
+
+        response_text = data.get("response", "")
+        cleaned = _clean_model_output(response_text)
+        return cleaned or text

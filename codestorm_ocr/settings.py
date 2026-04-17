@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/4.2/ref/settings/
 """
 
+import os
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -145,3 +146,9 @@ ALLOWED_UPLOAD_MIME_TYPES = {
     'image/jpg',
     'image/webp',
 }
+
+# Ollama translation backend configuration
+OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:3b")
+OLLAMA_TIMEOUT_S = int(os.environ.get("OLLAMA_TIMEOUT_S", "60"))
+TRANSLATION_CONCURRENCY = int(os.environ.get("TRANSLATION_CONCURRENCY", "4"))
