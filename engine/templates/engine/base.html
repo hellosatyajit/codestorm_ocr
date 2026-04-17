@@ -1,25 +1,114 @@
-{% load static %}<!DOCTYPE html>
-<html lang="en">
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>{% block title %}Codestorm OCR{% endblock %}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css" />
     <style>
-        :root { --pico-font-size: 15px; }
-        body > main { padding-top: 1.5rem; padding-bottom: 3rem; }
-        nav.app-nav { display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 1rem; border-bottom: 1px solid var(--pico-muted-border-color); }
-        nav.app-nav h1 { margin: 0; font-size: 1.15rem; }
-        nav.app-nav small { opacity: 0.7; }
+        :root {
+            --theme-page: #f0f2f5;
+            --theme-surface: #ffffff;
+            --theme-border: #e5e8ec;
+            --theme-text: #1a1d21;
+            --theme-muted: #6b7280;
+            --theme-accent: #ea580c;
+            --theme-accent-hover: #c2410c;
+            --theme-accent-soft: #fff7ed;
+            --theme-radius: 10px;
+            --theme-shadow: 0 1px 2px rgba(15, 23, 42, 0.05), 0 1px 3px rgba(15, 23, 42, 0.08);
+            --theme-shadow-lg: 0 4px 24px rgba(15, 23, 42, 0.06);
+            --pico-font-family: "Inter", system-ui, -apple-system, sans-serif;
+            --pico-font-size: 15px;
+            --pico-primary: var(--theme-accent);
+            --pico-primary-hover: var(--theme-accent-hover);
+            --pico-primary-background: var(--theme-accent-soft);
+            --pico-background-color: var(--theme-page);
+            --pico-card-background-color: var(--theme-surface);
+            --pico-muted-border-color: var(--theme-border);
+            --pico-border-radius: var(--theme-radius);
+        }
+        html { scroll-behavior: smooth; }
+        body {
+            background: var(--theme-page);
+            color: var(--theme-text);
+            min-height: 100vh;
+        }
+        body > main {
+            padding-top: 1.25rem;
+            padding-bottom: 3rem;
+        }
+        /* Minimal brand strip — no app-style header bar */
+        .app-brand {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 0.5rem 1rem 0;
+            display: flex;
+            align-items: baseline;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+        }
+        .app-brand a {
+            font-weight: 700;
+            font-size: 1.05rem;
+            color: var(--theme-text);
+            text-decoration: none;
+            letter-spacing: -0.02em;
+        }
+        .app-brand a:hover { color: var(--theme-accent); }
+        .app-brand-sub {
+            font-size: 0.8rem;
+            color: var(--theme-muted);
+            font-weight: 400;
+        }
+        .surface-card {
+            background: var(--theme-surface);
+            border: 1px solid var(--theme-border);
+            border-radius: var(--theme-radius);
+            box-shadow: var(--theme-shadow);
+        }
+        /* Buttons: solid accent primary, soft secondary */
+        button[type="submit"]:not(.secondary):not(.outline),
+        a[role="button"]:not(.secondary):not(.outline):not(.contrast) {
+            background: var(--theme-accent);
+            border-color: var(--theme-accent);
+            font-weight: 600;
+            box-shadow: 0 1px 2px rgba(234, 88, 12, 0.25);
+        }
+        button[type="submit"]:not(.secondary):not(.outline):hover,
+        a[role="button"]:not(.secondary):not(.outline):not(.contrast):hover {
+            background: var(--theme-accent-hover);
+            border-color: var(--theme-accent-hover);
+        }
+        a[role="button"].secondary,
+        a[role="button"].outline {
+            font-weight: 500;
+            box-shadow: none;
+        }
+        input:not([type="checkbox"]):not([type="radio"]),
+        select,
+        textarea {
+            background: #f8fafc !important;
+            border-color: var(--theme-border) !important;
+        }
+        input:focus,
+        select:focus,
+        textarea:focus {
+            border-color: rgba(234, 88, 12, 0.45) !important;
+            box-shadow: 0 0 0 3px rgba(234, 88, 12, 0.12) !important;
+        }
         {% block extra_styles %}{% endblock %}
     </style>
 </head>
 <body>
-    <nav class="app-nav">
-        <h1><a href="{% url 'engine:upload' %}" style="text-decoration: none; color: inherit;">Codestorm OCR</a></h1>
-        <small>Multi-lingual PDF translation · layout-preserving rebuild</small>
-    </nav>
-    <main class="container-fluid" style="max-width: 1400px; margin: 0 auto;">
+    <div class="app-brand">
+        <a href="{% url 'engine:upload' %}">Codestorm OCR</a>
+        <span class="app-brand-sub">PDF translation · layout-preserving output</span>
+    </div>
+    <main class="container-fluid" style="max-width: 1400px; margin: 0 auto; padding-left: 1rem; padding-right: 1rem;">
         {% block content %}{% endblock %}
     </main>
     {% block extra_scripts %}{% endblock %}
